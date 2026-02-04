@@ -38,7 +38,12 @@ export async function handlerUploadThumbnail(cfg: ApiConfig, req: BunRequest) {
     throw new UserForbiddenError("Forbidden to user");
   }
 
-  const videoExt = file.type.split('/')[1];
+  const fileType = file.type;
+  if (fileType !== 'image/jpeg' && fileType !== 'image/png'){
+    throw new BadRequestError("Invalid file type");
+  }
+
+  const videoExt = fileType.split('/')[1];
   const imageData = await file.arrayBuffer();
 
   const videoPath = path.join(cfg.assetsRoot, `${videoId}.${videoExt}`)
