@@ -18,7 +18,7 @@ export async function handlerUploadVideo(cfg: ApiConfig, req: BunRequest) {
     const token = getBearerToken(req.headers);
     const userID = validateJWT(token, cfg.jwtSecret);
   
-    console.log("uploading video ", videoId, " by user ", userID);
+    console.log("uploading video", videoId, "by user", userID);
   
     const formData = await req.formData();
     const file = formData.get("video");
@@ -47,12 +47,17 @@ export async function handlerUploadVideo(cfg: ApiConfig, req: BunRequest) {
     console.log(`S3 Key: ${fileName}`);
   
     // Write temporary file locally
-    const videoPath = path.join(cfg.assetsRoot, fileName)
-    const localFile = Bun.file(videoPath);
+    const sourceVideoPath = path.join(cfg.assetsRoot, fileName)
+    let localFile = Bun.file(sourceVideoPath);
     await Bun.write(localFile, videoData)
-    console.log("Temp File: " + videoPath);
+    console.log("Temp File: " + sourceVideoPath);
 
-    const aspectRatioStr = await getVideoAspectRatio(videoPath);
+    const aspectRatioStr = await getVideoAspectRatio(sourceVideoPath);
+
+    // Process video
+    const processedVideoPath = await processVideoForFastStart(sourceVideoPath);
+    await localFile.delete();
+    localFile = Bun.file(processedVideoPath);
 
     // Upload file to S3
     const fileKey = `${aspectRatioStr}/${fileName}`
@@ -103,4 +108,21 @@ export async function getVideoAspectRatio(filePath: string) : Promise<string> {
   }
 
   return "other";
+}
+
+export async function processVideoForFastStart(inputFilePath: string): Promise<string> {
+  const outputFilePath = inputFilePath + ".processed";
+
+  console.log(`Processing for fast start: ${outputFilePath}`);
+  const proc = Bun.spawn(["ffmpeg", 
+    "-i", inputFilePath, 
+    "-movflags", "faststart", "-map_metadata", 0, 
+    "-codec", "copy", "-f", "mp4", outputFilePath]);
+
+  const result = await proc.exited;
+  if (result != 0){
+    throw new BadRequestError("Could not process video for fast start");
+  }
+
+  return outputFilePath;
 }
