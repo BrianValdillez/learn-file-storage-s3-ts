@@ -8,6 +8,7 @@ import { BadRequestError, NotFoundError, UserForbiddenError } from "./errors";
 
 import { type ApiConfig } from "../config";
 import { getVideo, updateVideo } from "../db/videos";
+import type { Video } from "../db/videos"
 
 export async function handlerUploadVideo(cfg: ApiConfig, req: BunRequest) {
   const { videoId } = req.params as { videoId?: string };
@@ -64,17 +65,18 @@ export async function handlerUploadVideo(cfg: ApiConfig, req: BunRequest) {
     const s3File = cfg.s3Client.file(fileKey);
     await s3File.write(localFile, { type: fileType });
 
-    video.videoURL = `https://${cfg.s3Bucket}.s3.${cfg.s3Region}.amazonaws.com/${fileKey}`;
-    console.log(`URL: ${video.videoURL}`);
+    video.videoURL = fileKey;
+    //video.videoURL = `https://${cfg.s3Bucket}.s3.${cfg.s3Region}.amazonaws.com/${fileKey}`;
+    //console.log(`URL: ${video.videoURL}`);
     
     // Cleanup
     await localFile.delete();
 
     updateVideo(cfg.db, video);
-    return respondWithJSON(200, video);
+    return respondWithJSON(200, dbVideoToSignedVideo(cfg, video));
 }
 
-export async function getVideoAspectRatio(filePath: string) : Promise<string> {
+async function getVideoAspectRatio(filePath: string) : Promise<string> {
 
   const proc = Bun.spawn(["ffprobe", 
     "-v", "error", "-select_streams", "v:0", 
@@ -110,7 +112,7 @@ export async function getVideoAspectRatio(filePath: string) : Promise<string> {
   return "other";
 }
 
-export async function processVideoForFastStart(inputFilePath: string): Promise<string> {
+async function processVideoForFastStart(inputFilePath: string): Promise<string> {
   const outputFilePath = inputFilePath + ".processed";
 
   console.log(`Processing for fast start: ${outputFilePath}`);
@@ -125,4 +127,17 @@ export async function processVideoForFastStart(inputFilePath: string): Promise<s
   }
 
   return outputFilePath;
+}
+
+function generatePresignedURL(cfg: ApiConfig, key: string, expireTime: number) {
+  return cfg.s3Client.presign(key, { expiresIn: expireTime });
+}
+
+export function dbVideoToSignedVideo(cfg: ApiConfig, video: Video){
+  let url = video.videoURL;
+  if(url === undefined){
+    throw new BadRequestError("Cannot sign video: no URL")
+  }
+  video.videoURL = generatePresignedURL(cfg, url, 86400); // TODO: What is the expires time supposed to be?
+  return video;
 }
